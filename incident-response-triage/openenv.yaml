@@ -1,0 +1,29 @@
+name: incident-response-triage
+version: "1.0.0"
+description: >
+  An RL environment where an LLM agent diagnoses and remediates
+  production incidents by reasoning through logs, metrics, and alerts.
+  Simulates real SRE/DevOps workflows with 3 difficulty levels.
+tags:
+  - openenv
+  - sre
+  - devops
+  - incident-response
+  - real-world
+tasks:
+  - id: oom_crash
+    name: "OOM Crash"
+    difficulty: easy
+    description: "A service is down due to heap exhaustion. No red herrings."
+  - id: db_pool_exhaustion
+    name: "DB Pool Exhaustion"
+    difficulty: medium
+    description: "Service is slow. CPU looks suspicious but the real issue is the DB connection pool."
+  - id: cascading_failure
+    name: "Cascading Failure"
+    difficulty: hard
+    description: "API gateway is down. Agent must trace upstream through 4 services to find Redis disk exhaustion."
+reward_range: [0.0, 1.0]
+max_steps: 10
+observation_space: "Logs, metrics, alerts, service dependency map (JSON)"
+action_space: "diagnose | remediate | query_logs | query_metrics | escalate"
