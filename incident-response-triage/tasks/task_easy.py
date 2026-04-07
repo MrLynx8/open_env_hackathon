@@ -3,7 +3,6 @@ from typing import List
 
 from models import Action, Alert, LogEntry, Reward
 
-# Ground truth: grader string-matches against these sets.
 CORRECT_DIAGNOSIS = {
     "memory_exhaustion",
     "oom",
@@ -27,6 +26,8 @@ class OOMCrashTask:
     task_id = "oom_crash"
 
     def get_initial_state(self):
+        self._diagnosis_correct = False
+        self._remediation_correct = False
         return {
             "incident_id": str(uuid.uuid4()),
             "alerts": [
@@ -81,44 +82,47 @@ class OOMCrashTask:
         }
 
     def grade(self, action: Action, step: int, history: List[Action]) -> Reward:
-        score = 0.0
         breakdown = {}
 
         if action.action_type == "diagnose" and action.diagnosis:
             diagnosis = action.diagnosis.lower().replace(" ", "_").replace("-", "_")
             if any(candidate in diagnosis for candidate in CORRECT_DIAGNOSIS):
-                score += 0.5
-                breakdown["diagnosis"] = 0.5
-            else:
-                breakdown["diagnosis"] = 0.0
+                self._diagnosis_correct = True
 
         if action.action_type == "remediate" and action.remediation:
             remediation = action.remediation.lower().replace(" ", "_").replace("-", "_")
             if any(candidate in remediation for candidate in CORRECT_REMEDIATION):
-                score += 0.4
-                breakdown["remediation"] = 0.4
-            else:
-                breakdown["remediation"] = 0.0
+                self._remediation_correct = True
 
-        # Efficiency bonus: fewer steps yields larger bonus.
-        if score >= 0.85:
+        score = 0.0
+        if self._diagnosis_correct:
+            score += 0.5
+            breakdown["diagnosis"] = 0.5
+        if self._remediation_correct:
+            score += 0.4
+            breakdown["remediation"] = 0.4
+
+        if self._diagnosis_correct and self._remediation_correct:
             efficiency = max(0.0, round(0.1 * (1 - (step - 1) / 5.0), 3))
             score = min(1.0, score + efficiency)
             breakdown["efficiency_bonus"] = efficiency
 
-        # Penalty for repeating the same action_type in consecutive turns.
-        if len(history) >= 1 and history[-1].action_type == action.action_type:
+        if (
+            len(history) >= 1
+            and history[-1].action_type == action.action_type
+            and action.action_type in ("diagnose", "remediate")
+        ):
             penalty = 0.05
             score = max(0.0, score - penalty)
             breakdown["repeat_penalty"] = -penalty
 
         score = round(min(1.0, max(0.0, score)), 3)
         feedback = (
-            "Correct. OOM was caused by heap exhaustion - restarting or increasing heap resolves it."
-            if score >= 0.85
-            else "Getting closer. Check the memory metrics carefully."
-            if score >= 0.4
-            else "Incorrect so far. Look at the JVM heap metrics and error logs."
+            "Correct. OOM from heap exhaustion - restart or increase heap resolves it."
+            if self._diagnosis_correct and self._remediation_correct
+            else "Good diagnosis. Now provide the remediation action."
+            if self._diagnosis_correct
+            else "Incorrect diagnosis. Look at the JVM heap metrics and error logs."
         )
         return Reward(
             score=score,

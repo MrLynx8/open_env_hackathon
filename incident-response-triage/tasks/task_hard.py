@@ -13,6 +13,7 @@ CORRECT_DIAGNOSIS = {
     "redis_disk_exhaustion",
     "redis_oom_disk",
     "redis_out_of_disk",
+    "redis_no_space",
 }
 CORRECT_REMEDIATION = {
     "restart_redis",
@@ -30,6 +31,9 @@ class CascadingFailureTask:
     task_id = "cascading_failure"
 
     def get_initial_state(self):
+        self._diagnosis_correct = False
+        self._remediation_correct = False
+        self._investigated_redis = False
         return {
             "incident_id": str(uuid.uuid4()),
             "alerts": [
@@ -132,54 +136,58 @@ class CascadingFailureTask:
         }
 
     def grade(self, action: Action, step: int, history: List[Action]) -> Reward:
-        score = 0.0
         breakdown = {}
+        blame_score_adj = 0.0
+
+        if action.action_type in ("query_logs", "query_metrics") and action.target_service:
+            target_service = action.target_service.lower().replace(" ", "-")
+            if "redis" in target_service or "cache" in target_service:
+                self._investigated_redis = True
 
         if action.action_type == "diagnose" and action.diagnosis:
             diagnosis = action.diagnosis.lower().replace(" ", "_").replace("-", "_")
             if any(candidate in diagnosis for candidate in CORRECT_DIAGNOSIS):
-                score += 0.5
-                breakdown["diagnosis"] = 0.5
+                self._diagnosis_correct = True
             elif "api" in diagnosis or "gateway" in diagnosis:
-                score -= 0.15
-                breakdown["wrong_layer_penalty"] = -0.15
+                blame_score_adj = -0.15
             elif "order" in diagnosis:
-                score -= 0.05
-                breakdown["wrong_layer_penalty"] = -0.05
+                blame_score_adj = -0.05
             elif "inventory" in diagnosis:
-                score += 0.1
-                breakdown["warm_credit"] = 0.1
-            else:
-                breakdown["diagnosis"] = 0.0
+                blame_score_adj = 0.05
 
         if action.action_type == "remediate" and action.remediation:
             remediation = action.remediation.lower().replace(" ", "_").replace("-", "_")
             if any(candidate in remediation for candidate in CORRECT_REMEDIATION):
-                score += 0.4
-                breakdown["remediation"] = 0.4
-            else:
-                breakdown["remediation"] = 0.0
+                self._remediation_correct = True
 
-        # Reward targeted upstream investigation into Redis.
-        if action.action_type in ("query_logs", "query_metrics") and action.target_service:
-            target_service = action.target_service.lower().replace(" ", "-")
-            if "redis" in target_service or "cache" in target_service:
-                partial = 0.15
-                score = max(score, partial)
-                breakdown["upstream_investigation"] = partial
+        score = 0.0
+        if self._diagnosis_correct:
+            score += 0.5
+            breakdown["diagnosis"] = 0.5
+        if self._remediation_correct:
+            score += 0.4
+            breakdown["remediation"] = 0.4
+        if self._investigated_redis and not self._diagnosis_correct:
+            score = max(score, 0.15)
+            breakdown["upstream_investigation"] = 0.15
+        if blame_score_adj != 0 and not self._diagnosis_correct:
+            score = max(0.0, score + blame_score_adj)
+            breakdown["layer_penalty"] = blame_score_adj
 
-        if score >= 0.85:
+        if self._diagnosis_correct and self._remediation_correct:
             efficiency = max(0.0, round(0.1 * (1 - (step - 1) / 8.0), 3))
             score = min(1.0, score + efficiency)
             breakdown["efficiency_bonus"] = efficiency
 
         score = round(min(1.0, max(0.0, score)), 3)
         feedback = (
-            "Correct. Redis disk exhaustion triggered the cascade. api-gateway errors were just a symptom."
-            if score >= 0.85
-            else "You blamed a downstream symptom. Trace upstream through service_map."
-            if score < 0
-            else "Getting closer. Investigate the services furthest upstream in the dependency chain."
+            "Correct. Redis disk exhaustion caused the cascade."
+            if self._diagnosis_correct and self._remediation_correct
+            else "Great diagnosis. Now fix Redis."
+            if self._diagnosis_correct
+            else "You are looking in the right area - what exactly is Redis reporting?"
+            if self._investigated_redis
+            else "Trace upstream: api-gateway -> order -> inventory -> redis. Start from the deepest dependency."
         )
         return Reward(
             score=score,
