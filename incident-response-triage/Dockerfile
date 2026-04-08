@@ -4,7 +4,7 @@ WORKDIR /app
 
 # Install dependencies first to take advantage of Docker layer caching.
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install -r requirements.txt
 
 # Copy source code.
 COPY . .
