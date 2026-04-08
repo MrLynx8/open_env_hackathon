@@ -31,7 +31,7 @@ def _load_dotenv(dotenv_path: str = ".env") -> None:
 
 _load_dotenv()
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "http://localhost:7860")
+API_BASE_URL = os.environ.get("API_BASE_URL", "https://MrLynx8-incident-response-triage.hf.space")
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
