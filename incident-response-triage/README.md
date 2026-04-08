@@ -102,10 +102,10 @@ python inference.py
 
 | Task | Score |
 |------|-------|
-| oom_crash | 0.90 |
-| db_pool_exhaustion | 0.72 |
-| cascading_failure | 0.55 |
-| **Mean** | **0.72** |
+| oom_crash | 0.960 |
+| db_pool_exhaustion | 0.983 |
+| cascading_failure | 0.938 |
+| **Mean** | **0.960** |
 
 ## Docker
 
