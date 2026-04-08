@@ -8,6 +8,7 @@ import json
 import os
 import time
 from typing import Any, Dict
+from urllib.parse import urlparse
 
 import requests
 from openai import OpenAI
@@ -31,7 +32,49 @@ def _load_dotenv(dotenv_path: str = ".env") -> None:
 
 _load_dotenv()
 
-API_BASE_URL = os.environ.get("API_BASE_URL", "https://MrLynx8-incident-response-triage.hf.space")
+DEFAULT_SPACE_URL = "https://MrLynx8-incident-response-triage.hf.space"
+
+
+def _is_valid_api_base_url(url: str) -> bool:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return False
+    if not parsed.netloc:
+        return False
+
+    host = (parsed.hostname or "").lower()
+    # Single-label hosts like "lite" are usually accidental/broken values.
+    if host and "." not in host and host not in {"localhost", "127.0.0.1"}:
+        return False
+    return True
+
+
+def _resolve_api_base_url() -> str:
+    default_base = os.environ.get("DEFAULT_API_BASE_URL", DEFAULT_SPACE_URL).strip()
+    raw_base = os.environ.get("API_BASE_URL", default_base).strip()
+
+    candidates = [
+        raw_base,
+        os.environ.get("PING_URL", "").strip(),
+        os.environ.get("SPACE_URL", "").strip(),
+        default_base,
+        "http://localhost:7860",
+    ]
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        normalized = candidate.rstrip("/")
+        if _is_valid_api_base_url(normalized):
+            return normalized
+
+    raise RuntimeError(
+        "Could not resolve a valid API_BASE_URL. Set API_BASE_URL to your full environment URL, "
+        "for example: https://MrLynx8-incident-response-triage.hf.space"
+    )
+
+
+API_BASE_URL = _resolve_api_base_url()
 MODEL_NAME = os.environ.get("MODEL_NAME", "gpt-4o-mini")
 HF_TOKEN = os.environ.get("HF_TOKEN", "").strip()
 GITHUB_TOKEN = os.environ.get("GITHUB_TOKEN", "").strip()
@@ -165,8 +208,19 @@ def _forced_remediate(task_id: str, reason: str) -> Dict[str, Any]:
 
 
 def run_task(task_id: str) -> float:
-    reset_resp = requests.post(f"{API_BASE_URL}/reset", params={"task_id": task_id}, timeout=30)
-    reset_resp.raise_for_status()
+    reset_url = f"{API_BASE_URL}/reset"
+    reset_resp = requests.post(reset_url, params={"task_id": task_id}, timeout=30)
+    try:
+        reset_resp.raise_for_status()
+    except requests.HTTPError as exc:
+        status = reset_resp.status_code
+        body = reset_resp.text[:300]
+        raise RuntimeError(
+            f"Failed to call reset endpoint at '{reset_url}' (HTTP {status}). "
+            "Ensure API_BASE_URL points to your full Space URL. "
+            f"Response snippet: {body}"
+        ) from exc
+
     observation = reset_resp.json()
 
     # Required [START] log format.
